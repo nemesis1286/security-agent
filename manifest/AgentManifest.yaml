@@ -11,6 +11,51 @@ Descriptor:
     - OAuthAuthorizationCodeFlow
 
 SkillGroups:
+  # Agent entrypoint — this is the "agent tool" Security Copilot requires
+  - Format: AGENT
+    Skills:
+      - Name: TravelAnomalyTriageEntrypoint
+        DisplayName: Travel Anomaly Triage Agent
+        Description: >
+          Entrypoint for the Travel Anomaly Triage Agent. Orchestrates alert
+          parsing, device compliance checks, Out of Office checks, sign-in
+          history analysis, and final verdict correlation.
+        Interfaces:
+          - Agent
+        Inputs:
+          - Name: AlertData
+            Description: The raw alert or incident data from Defender / Sentinel.
+            Required: true
+        Settings:
+          Model: gpt-4.1
+          Instructions: |
+            You are the Travel Anomaly Triage Agent. When triggered with an atypical
+            or impossible travel alert, execute the following plan:
+
+            1. Use ExtractAlertContext to parse the alert and identify the user,
+               device, IPs, locations, and timestamps.
+
+            2. Run these checks in parallel:
+               a. Use CheckDeviceCompliance with the device ID to determine if the
+                  sign-in was from a company-managed, compliant device.
+               b. Use CheckOutOfOffice with the user's UPN to check if automatic
+                  replies are enabled and the configured dates.
+               c. Use AnalyzeSignInHistory with the user's UPN, destination IP, and
+                  destination location to review the last 30 days of sign-in activity.
+
+            3. Once all checks complete, use CorrelateAndVerdict to analyze all
+               evidence and produce the final triage verdict.
+
+            Always present your findings transparently. Do not close or resolve the
+            alert automatically — the analyst must approve the final disposition.
+          ChildSkills:
+            - ExtractAlertContext
+            - CheckDeviceCompliance
+            - CheckOutOfOffice
+            - AnalyzeSignInHistory
+            - CorrelateAndVerdict
+
+  # GPT skills — prompt-based reasoning
   - Format: GPT
     Skills:
       - Name: ExtractAlertContext
@@ -111,6 +156,7 @@ SkillGroups:
             **Recommended Actions**:
             - [List specific next steps for the analyst]
 
+  # API skills — Microsoft Graph calls
   - Format: API
     Skills:
       - Name: CheckDeviceCompliance
@@ -124,7 +170,7 @@ SkillGroups:
             Description: The device ID extracted from the alert.
             Required: true
         Settings:
-          OpenApiSpecFile: openapispec_1.yaml
+          OpenApiSpecUrl: openapispec_1.yaml
 
       - Name: CheckOutOfOffice
         DisplayName: Check Out of Office
@@ -138,8 +184,9 @@ SkillGroups:
             Description: The UPN of the user from the alert.
             Required: true
         Settings:
-          OpenApiSpecFile: openapispec_2.yaml
+          OpenApiSpecUrl: openapispec_2.yaml
 
+  # KQL skill — Sentinel sign-in history query
   - Format: KQL
     Skills:
       - Name: AnalyzeSignInHistory
@@ -160,7 +207,66 @@ SkillGroups:
             Description: The destination location (city, country) to check against history.
             Required: true
         Settings:
-          Template: kql/analyze_signin_history.kql
+          Target: Sentinel
+          Template: |
+            // Analyze sign-in history for the last 30 days to support travel anomaly triage.
+            let TargetUser = "{{UserPrincipalName}}";
+            let AlertDestinationIP = "{{DestinationIP}}";
+            let AlertDestinationLocation = "{{DestinationLocation}}";
+            let LookbackPeriod = 30d;
+            let SignInSummary = SigninLogs
+                | where TimeGenerated > ago(LookbackPeriod)
+                | where UserPrincipalName =~ TargetUser
+                | extend City = tostring(LocationDetails.city)
+                | extend Country = tostring(LocationDetails.countryOrRegion)
+                | extend State = tostring(LocationDetails.state)
+                | extend Latitude = toreal(LocationDetails.geoCoordinates.latitude)
+                | extend Longitude = toreal(LocationDetails.geoCoordinates.longitude)
+                | summarize
+                    SignInCount = count(),
+                    FirstSeen = min(TimeGenerated),
+                    LastSeen = max(TimeGenerated),
+                    DistinctDays = dcount(bin(TimeGenerated, 1d))
+                  by IPAddress, City, State, Country, Latitude, Longitude
+                | extend LocationLabel = strcat(City, ", ", Country)
+                | extend IsAlertDestinationIP = iif(IPAddress == AlertDestinationIP, true, false)
+                | extend IsAlertDestinationLocation = iif(LocationLabel contains AlertDestinationLocation, true, false)
+                | sort by SignInCount desc;
+            let DestinationIPSeen = toscalar(
+                SignInSummary
+                | where IsAlertDestinationIP == true
+                | summarize Count = count()
+            ) > 0;
+            let DestinationLocationSeen = toscalar(
+                SignInSummary
+                | where IsAlertDestinationLocation == true
+                | summarize Count = count()
+            ) > 0;
+            let TotalDistinctIPs = toscalar(SignInSummary | summarize dcount(IPAddress));
+            let TotalDistinctLocations = toscalar(SignInSummary | summarize dcount(LocationLabel));
+            SignInSummary
+            | extend DestinationIPSeenBefore = DestinationIPSeen
+            | extend DestinationLocationSeenBefore = DestinationLocationSeen
+            | extend TotalDistinctIPs = TotalDistinctIPs
+            | extend TotalDistinctLocations = TotalDistinctLocations
+            | project
+                IPAddress,
+                LocationLabel,
+                City,
+                State,
+                Country,
+                Latitude,
+                Longitude,
+                SignInCount,
+                DistinctDays,
+                FirstSeen,
+                LastSeen,
+                IsAlertDestinationIP,
+                IsAlertDestinationLocation,
+                DestinationIPSeenBefore,
+                DestinationLocationSeenBefore,
+                TotalDistinctIPs,
+                TotalDistinctLocations
 
 AgentDefinitions:
   - Name: TravelAnomalyTriageAgent
@@ -170,34 +276,9 @@ AgentDefinitions:
       compliance, Out of Office status, and 30-day sign-in history. Produces
       a triage verdict (False Positive / Suspicious / True Positive) with
       confidence level and evidence summary.
-    Instructions: >
-      You are the Travel Anomaly Triage Agent. When triggered with an atypical
-      or impossible travel alert, execute the following plan:
-
-      1. Use ExtractAlertContext to parse the alert and identify the user,
-         device, IPs, locations, and timestamps.
-
-      2. Run these checks in parallel:
-         a. Use CheckDeviceCompliance with the device ID to determine if the
-            sign-in was from a company-managed, compliant device.
-         b. Use CheckOutOfOffice with the user's UPN to check if automatic
-            replies are enabled and the configured dates.
-         c. Use AnalyzeSignInHistory with the user's UPN, destination IP, and
-            destination location to review the last 30 days of sign-in activity.
-
-      3. Once all checks complete, use CorrelateAndVerdict to analyze all
-         evidence and produce the final triage verdict.
-
-      Always present your findings transparently. Do not close or resolve the
-      alert automatically — the analyst must approve the final disposition.
-    ChildSkills:
-      - TravelAnomalyTriageAgent.ExtractAlertContext
-      - TravelAnomalyTriageAgent.CheckDeviceCompliance
-      - TravelAnomalyTriageAgent.CheckOutOfOffice
-      - TravelAnomalyTriageAgent.AnalyzeSignInHistory
-      - TravelAnomalyTriageAgent.CorrelateAndVerdict
+    RequiredSkillsets:
+      - TravelAnomalyTriageAgent
     Triggers:
-      - Type: Interactive
-    Settings:
-      ModelOptions:
-        Temperature: 0.1
+      - Name: Default
+        DefaultPollPeriodSeconds: 0
+        ProcessSkill: TravelAnomalyTriageAgent.TravelAnomalyTriageEntrypoint

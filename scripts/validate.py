@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Pre-flight validation for the Travel Anomaly Triage Agent manifest and skills.
-Checks YAML syntax, manifest structure, OpenAPI specs, and KQL template references.
+Checks YAML syntax, manifest structure, OpenAPI specs, KQL templates, and sample alerts.
 """
 
 import sys
@@ -72,6 +72,91 @@ def validate_manifest():
     else:
         check(f"DisplayName < 30 chars ({len(display_name)})", True, "")
 
+    # SkillGroups — check for required Format: AGENT entrypoint
+    skill_groups = manifest.get("SkillGroups", [])
+    formats_found = set()
+    all_skill_names = []
+    agent_entrypoint = None
+
+    for group in skill_groups:
+        fmt = group.get("Format", "")
+        formats_found.add(fmt)
+        check(f"SkillGroup format '{fmt}' is valid", fmt in ("GPT", "API", "KQL", "AGENT"), f"Unknown format: {fmt}")
+
+        for skill in group.get("Skills", []):
+            all_skill_names.append(skill.get("Name", ""))
+            check(f"Skill '{skill.get('Name', '?')}' has Name", "Name" in skill, "Missing 'Name'")
+            check(f"Skill '{skill.get('Name', '?')}' has Description", "Description" in skill, "Missing 'Description'")
+
+            # AGENT skill — the critical entrypoint
+            if fmt == "AGENT":
+                agent_entrypoint = skill
+                check(
+                    f"AGENT skill '{skill['Name']}' has Interfaces",
+                    "Interfaces" in skill,
+                    "Missing 'Interfaces' (must include 'Agent')"
+                )
+                interfaces = skill.get("Interfaces", [])
+                check(
+                    f"AGENT skill '{skill['Name']}' declares Agent interface",
+                    "Agent" in interfaces or "InteractiveAgent" in interfaces,
+                    f"Interfaces {interfaces} must include 'Agent' or 'InteractiveAgent'"
+                )
+                settings = skill.get("Settings", {})
+                check(
+                    f"AGENT skill '{skill['Name']}' has Settings.Model",
+                    "Model" in settings,
+                    "Missing Settings.Model (e.g. 'gpt-4.1')"
+                )
+                check(
+                    f"AGENT skill '{skill['Name']}' has Settings.Instructions",
+                    "Instructions" in settings,
+                    "Missing Settings.Instructions"
+                )
+                check(
+                    f"AGENT skill '{skill['Name']}' has Settings.ChildSkills",
+                    "ChildSkills" in settings,
+                    "Missing Settings.ChildSkills"
+                )
+
+                # Verify ChildSkills reference valid skill names
+                child_skills = settings.get("ChildSkills", [])
+                for cs in child_skills:
+                    check(
+                        f"ChildSkill '{cs}' references valid skill",
+                        cs in all_skill_names or cs in [s.get("Name", "") for g in skill_groups for s in g.get("Skills", [])],
+                        f"Skill '{cs}' not found in SkillGroups"
+                    )
+
+            # API skills — check OpenApiSpecUrl
+            if fmt == "API":
+                spec_url = skill.get("Settings", {}).get("OpenApiSpecUrl", "")
+                check(
+                    f"API skill '{skill['Name']}' has OpenApiSpecUrl",
+                    bool(spec_url),
+                    "Missing Settings.OpenApiSpecUrl"
+                )
+
+            # KQL skills — check Target and inline Template
+            if fmt == "KQL":
+                settings = skill.get("Settings", {})
+                check(
+                    f"KQL skill '{skill['Name']}' has Target",
+                    "Target" in settings,
+                    "Missing Settings.Target (e.g. 'Sentinel')"
+                )
+                template = settings.get("Template", "")
+                check(
+                    f"KQL skill '{skill['Name']}' has inline Template",
+                    bool(template) and "SigninLogs" in template,
+                    "Missing or empty Settings.Template (KQL must be inlined)"
+                )
+
+    check("Format: AGENT SkillGroup exists", "AGENT" in formats_found, "Missing 'Format: AGENT' — this is the 'agent tool' Security Copilot requires")
+
+    print(f"\n  Skill formats used: {', '.join(sorted(formats_found))}")
+    print(f"  Total skills: {sum(len(g.get('Skills', [])) for g in skill_groups)}")
+
     # AgentDefinitions
     agent_defs = manifest.get("AgentDefinitions", [])
     check("Exactly one AgentDefinition", len(agent_defs) == 1, f"Found {len(agent_defs)}, expected 1")
@@ -79,66 +164,37 @@ def validate_manifest():
     if agent_defs:
         agent = agent_defs[0]
         check("Agent.Name present", "Name" in agent, "Missing 'Name'")
-        check("Agent.Instructions present", "Instructions" in agent, "Missing 'Instructions'")
-        check("Agent.ChildSkills present", "ChildSkills" in agent, "Missing 'ChildSkills'")
+        check("Agent.Description present", "Description" in agent, "Missing 'Description'")
         check("Agent.Triggers present", "Triggers" in agent, "Missing 'Triggers'")
+        check("Agent.RequiredSkillsets present", "RequiredSkillsets" in agent, "Missing 'RequiredSkillsets'")
 
-        # Verify all child skills reference valid skill names
-        child_skills = agent.get("ChildSkills", [])
-        all_skill_names = []
-        for group in manifest.get("SkillGroups", []):
-            for skill in group.get("Skills", []):
-                all_skill_names.append(skill.get("Name", ""))
-
+        # RequiredSkillsets should include the Descriptor.Name
         skillset_name = desc.get("Name", "")
-        for cs in child_skills:
-            # ChildSkills format: SkillsetName.SkillName
-            parts = cs.split(".")
-            if len(parts) == 2:
-                skill_name = parts[1]
+        required = agent.get("RequiredSkillsets", [])
+        check(
+            f"RequiredSkillsets includes '{skillset_name}'",
+            skillset_name in required,
+            f"RequiredSkillsets {required} must include Descriptor.Name '{skillset_name}'"
+        )
+
+        # Triggers should reference the AGENT entrypoint via ProcessSkill
+        triggers = agent.get("Triggers", [])
+        if triggers:
+            trigger = triggers[0]
+            check("Trigger has Name", "Name" in trigger, "Missing Trigger.Name")
+            process_skill = trigger.get("ProcessSkill", "")
+            check(
+                "Trigger has ProcessSkill",
+                bool(process_skill),
+                "Missing Trigger.ProcessSkill"
+            )
+            if agent_entrypoint:
+                expected_ref = f"{skillset_name}.{agent_entrypoint['Name']}"
                 check(
-                    f"ChildSkill '{cs}' references valid skill",
-                    skill_name in all_skill_names,
-                    f"Skill '{skill_name}' not found in SkillGroups"
+                    f"ProcessSkill references entrypoint '{expected_ref}'",
+                    process_skill == expected_ref,
+                    f"Expected '{expected_ref}', got '{process_skill}'"
                 )
-                check(
-                    f"ChildSkill '{cs}' uses correct skillset prefix",
-                    parts[0] == skillset_name,
-                    f"Expected prefix '{skillset_name}', got '{parts[0]}'"
-                )
-
-    # SkillGroups
-    skill_groups = manifest.get("SkillGroups", [])
-    formats_found = set()
-    for group in skill_groups:
-        fmt = group.get("Format", "")
-        formats_found.add(fmt)
-        check(f"SkillGroup format '{fmt}' is valid", fmt in ("GPT", "API", "KQL", "AGENT"), f"Unknown format: {fmt}")
-
-        for skill in group.get("Skills", []):
-            check(f"Skill '{skill.get('Name', '?')}' has Name", "Name" in skill, "Missing 'Name'")
-            check(f"Skill '{skill.get('Name', '?')}' has Description", "Description" in skill, "Missing 'Description'")
-
-            # Check API skills reference OpenAPI spec files
-            if fmt == "API":
-                spec_file = skill.get("Settings", {}).get("OpenApiSpecFile", "")
-                check(
-                    f"API skill '{skill['Name']}' references spec file",
-                    bool(spec_file),
-                    "Missing Settings.OpenApiSpecFile"
-                )
-
-            # Check KQL skills reference template files
-            if fmt == "KQL":
-                template = skill.get("Settings", {}).get("Template", "")
-                check(
-                    f"KQL skill '{skill['Name']}' references template",
-                    bool(template),
-                    "Missing Settings.Template"
-                )
-
-    print(f"\n  Skill formats used: {', '.join(sorted(formats_found))}")
-    print(f"  Total skills: {sum(len(g.get('Skills', [])) for g in skill_groups)}")
 
 
 def validate_openapi_specs():
@@ -186,7 +242,7 @@ def validate_openapi_specs():
 
 
 def validate_kql():
-    print("\n=== KQL Templates ===")
+    print("\n=== KQL Templates (standalone files) ===")
     for kql_path in KQL_FILES:
         print(f"\n  File: {kql_path}")
         if not os.path.exists(kql_path):
@@ -207,6 +263,32 @@ def validate_kql():
         check("Uses summarize operator", "summarize" in content, "No 'summarize' operator")
         check("Uses where operator", "where" in content, "No 'where' operator")
         check("Uses extend operator", "extend" in content, "No 'extend' operator")
+
+
+def validate_inline_kql():
+    """Validate the KQL template inlined in the manifest."""
+    print("\n=== KQL Template (inlined in manifest) ===")
+
+    with open(MANIFEST_PATH) as f:
+        manifest = yaml.safe_load(f)
+
+    for group in manifest.get("SkillGroups", []):
+        if group.get("Format") != "KQL":
+            continue
+        for skill in group.get("Skills", []):
+            template = skill.get("Settings", {}).get("Template", "")
+            name = skill.get("Name", "?")
+            print(f"\n  Skill: {name}")
+
+            check("Inline template is not empty", len(template.strip()) > 0, "Empty KQL template")
+            check("Contains SigninLogs", "SigninLogs" in template, "No SigninLogs reference")
+            check("Contains {{UserPrincipalName}}", "{{UserPrincipalName}}" in template, "Missing placeholder")
+            check("Contains {{DestinationIP}}", "{{DestinationIP}}" in template, "Missing placeholder")
+            check("Contains {{DestinationLocation}}", "{{DestinationLocation}}" in template, "Missing placeholder")
+            check("Uses 30d lookback", "30d" in template, "No 30d lookback")
+            check("Uses summarize", "summarize" in template, "No summarize operator")
+            check("Uses where", "where" in template, "No where operator")
+            check("Uses extend", "extend" in template, "No extend operator")
 
 
 def validate_sample_alerts():
@@ -261,6 +343,7 @@ if __name__ == "__main__":
     validate_manifest()
     validate_openapi_specs()
     validate_kql()
+    validate_inline_kql()
     validate_sample_alerts()
     validate_package_structure()
 
