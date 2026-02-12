@@ -1,0 +1,40 @@
+Descriptor:
+  Name: TravelAnomalyTriageApiPlugin
+  DisplayName: Travel Triage API Tools
+  Description: >
+    Microsoft Graph API skills for checking device compliance and Out of Office
+    status. Used by the Travel Anomaly Triage Agent.
+  SupportedAuthTypes:
+    - OAuthAuthorizationCodeFlow
+
+SkillGroups:
+  - Format: API
+    Skills:
+      - Name: CheckDeviceCompliance
+        DisplayName: Check Device Compliance
+        Description: >
+          Queries Microsoft Graph API to determine if the device used in the
+          sign-in is company-managed and compliant. A compliant, managed device
+          is a strong indicator of a false positive.
+        Inputs:
+          - Name: DeviceId
+            Description: The device ID extracted from the alert.
+            Required: true
+        Settings:
+          OpenApiSpecUrl: openapispec_1.yaml
+          EndpointUrl: https://graph.microsoft.com/v1.0
+
+      - Name: CheckOutOfOffice
+        DisplayName: Check Out of Office
+        Description: >
+          Queries Microsoft Graph API to check if the user has automatic replies
+          (Out of Office) configured. An active OOO with dates overlapping the
+          alert suggests the user is traveling, supporting a false positive
+          determination.
+        Inputs:
+          - Name: UserPrincipalName
+            Description: The UPN of the user from the alert.
+            Required: true
+        Settings:
+          OpenApiSpecUrl: openapispec_2.yaml
+          EndpointUrl: https://graph.microsoft.com/v1.0
