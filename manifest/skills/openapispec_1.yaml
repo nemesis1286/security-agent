@@ -1,0 +1,74 @@
+openapi: 3.0.3
+info:
+  title: Device Compliance Check
+  description: >
+    Queries Microsoft Graph API to check whether a device is company-managed
+    and compliant. Used by the Travel Anomaly Triage Agent to determine if a
+    sign-in originated from a corporate device.
+  version: 1.0.0
+
+servers:
+  - url: https://graph.microsoft.com/v1.0
+
+paths:
+  /devices:
+    get:
+      operationId: checkDeviceCompliance
+      summary: Get device compliance and management status
+      description: >
+        Retrieves the device record from Entra ID by device ID and returns
+        its compliance and management state.
+      parameters:
+        - name: $filter
+          in: query
+          required: true
+          description: OData filter to find the device by deviceId.
+          schema:
+            type: string
+          example: "deviceId eq '{DeviceId}'"
+        - name: $select
+          in: query
+          required: false
+          description: Properties to return.
+          schema:
+            type: string
+            default: "id,displayName,deviceId,isCompliant,isManaged,operatingSystem,operatingSystemVersion,trustType"
+      responses:
+        "200":
+          description: Device record retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  value:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          description: Entra object ID of the device.
+                        displayName:
+                          type: string
+                          description: Display name of the device.
+                        deviceId:
+                          type: string
+                          description: Unique device identifier.
+                        isCompliant:
+                          type: boolean
+                          description: Whether the device meets compliance policies.
+                        isManaged:
+                          type: boolean
+                          description: Whether the device is managed by Intune or another MDM.
+                        operatingSystem:
+                          type: string
+                          description: OS of the device (Windows, macOS, etc.).
+                        operatingSystemVersion:
+                          type: string
+                          description: OS version string.
+                        trustType:
+                          type: string
+                          description: "Trust type: AzureAd, ServerAd, or Workplace."
+        "404":
+          description: Device not found — may not be a corporate device.

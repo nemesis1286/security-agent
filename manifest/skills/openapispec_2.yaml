@@ -1,0 +1,78 @@
+openapi: 3.0.3
+info:
+  title: Out of Office Check
+  description: >
+    Queries Microsoft Graph API to check if a user has automatic replies
+    (Out of Office) configured. Used by the Travel Anomaly Triage Agent
+    to determine if a user is likely traveling.
+  version: 1.0.0
+
+servers:
+  - url: https://graph.microsoft.com/v1.0
+
+paths:
+  /users/{userPrincipalName}/mailboxSettings/automaticRepliesSetting:
+    get:
+      operationId: checkOutOfOffice
+      summary: Get automatic replies (Out of Office) setting for a user
+      description: >
+        Retrieves the user's mailbox automatic replies configuration to
+        determine if OOO is enabled and the scheduled dates.
+      parameters:
+        - name: userPrincipalName
+          in: path
+          required: true
+          description: The user principal name (email) of the user to check.
+          schema:
+            type: string
+          example: "user@contoso.com"
+      responses:
+        "200":
+          description: Automatic replies setting retrieved successfully.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    description: "Status of automatic replies: disabled, alwaysEnabled, or scheduled."
+                    enum:
+                      - disabled
+                      - alwaysEnabled
+                      - scheduled
+                  externalAudience:
+                    type: string
+                    description: "Who receives external replies: none, contactsOnly, or all."
+                    enum:
+                      - none
+                      - contactsOnly
+                      - all
+                  internalReplyMessage:
+                    type: string
+                    description: The automatic reply message sent to internal senders.
+                  externalReplyMessage:
+                    type: string
+                    description: The automatic reply message sent to external senders.
+                  scheduledStartDateTime:
+                    type: object
+                    properties:
+                      dateTime:
+                        type: string
+                        format: date-time
+                        description: Start date/time of scheduled automatic replies.
+                      timeZone:
+                        type: string
+                        description: Time zone of the start date/time.
+                  scheduledEndDateTime:
+                    type: object
+                    properties:
+                      dateTime:
+                        type: string
+                        format: date-time
+                        description: End date/time of scheduled automatic replies.
+                      timeZone:
+                        type: string
+                        description: Time zone of the end date/time.
+        "404":
+          description: User not found.

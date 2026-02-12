@@ -1,0 +1,203 @@
+Descriptor:
+  Name: TravelAnomalyTriageAgent
+  DisplayName: Travel Anomaly Triage
+  Description: >
+    Automatically investigates atypical and impossible travel alerts from
+    Microsoft Defender and Sentinel. Checks device compliance, Out of Office
+    status, and 30-day sign-in history to determine whether an alert is a
+    false positive, suspicious, or a true positive. Produces a verdict with
+    confidence level and evidence summary for SOC analyst review.
+  SupportedAuthTypes:
+    - OAuthAuthorizationCodeFlow
+
+SkillGroups:
+  - Format: GPT
+    Skills:
+      - Name: ExtractAlertContext
+        DisplayName: Extract Alert Context
+        Description: >
+          Parses the incoming atypical or impossible travel alert and extracts
+          the user principal name (UPN), source and destination IPs, geolocations,
+          device ID, and timestamps into a structured format for downstream skills.
+        Inputs:
+          - Name: AlertData
+            Description: The raw alert or incident data from Defender / Sentinel.
+            Required: true
+        Settings:
+          Template: |
+            You are a security alert parser. Given the following alert data, extract
+            and return a structured summary with these fields:
+
+            - UserPrincipalName
+            - SourceIP and SourceLocation (city, country)
+            - DestinationIP and DestinationLocation (city, country)
+            - DeviceId
+            - AlertTimestamp
+            - AlertType (Atypical Travel or Impossible Travel)
+            - TravelSpeedKmh (if available)
+
+            Alert data:
+            {{AlertData}}
+
+            Return the result as a structured summary. If any field is not available,
+            note it as "Not available".
+
+      - Name: CorrelateAndVerdict
+        DisplayName: Correlate and Verdict
+        Description: >
+          Reasons over all collected evidence from device compliance, Out of Office,
+          and sign-in history checks to produce a final triage verdict with confidence
+          level, evidence summary, and recommended next steps.
+        Inputs:
+          - Name: AlertContext
+            Description: Structured alert context from ExtractAlertContext.
+            Required: true
+          - Name: DeviceComplianceResult
+            Description: Device compliance check result from CheckDeviceCompliance.
+            Required: true
+          - Name: OutOfOfficeResult
+            Description: Out of Office status from CheckOutOfOffice.
+            Required: true
+          - Name: SignInHistoryResult
+            Description: Sign-in history analysis from AnalyzeSignInHistory.
+            Required: true
+        Settings:
+          Template: |
+            You are a security analyst assistant. Analyze the following evidence
+            collected for an atypical/impossible travel alert and produce a triage
+            verdict.
+
+            ## Alert Context
+            {{AlertContext}}
+
+            ## Device Compliance Check
+            {{DeviceComplianceResult}}
+
+            ## Out of Office Status
+            {{OutOfOfficeResult}}
+
+            ## Sign-In History (Last 30 Days)
+            {{SignInHistoryResult}}
+
+            ## Verdict Guidelines
+
+            Use this decision matrix as a baseline:
+
+            - Device compliant + OOO active + known location → False Positive (High confidence)
+            - Device compliant + OOO active + unknown location → False Positive (Medium confidence)
+            - Device compliant + no OOO + known location → False Positive (Medium confidence)
+            - Device compliant + no OOO + unknown location → Suspicious (Medium confidence)
+            - Non-compliant device + OOO active + known location → False Positive (Medium confidence)
+            - Non-compliant device + OOO active + unknown location → Suspicious (Medium confidence)
+            - Non-compliant device + no OOO + known location → Suspicious (Low confidence)
+            - Non-compliant device + no OOO + unknown location → True Positive (High confidence)
+
+            Also consider:
+            - Whether the travel speed is physically possible
+            - Whether the sign-in frequency pattern is consistent with the user's history
+            - Whether the OOO dates align with the alert timestamp
+
+            ## Required Output Format
+
+            **Verdict**: [False Positive / Suspicious / True Positive]
+            **Confidence**: [High / Medium / Low]
+
+            **Evidence Summary**:
+            - Device compliance: [result]
+            - Out of Office: [result]
+            - Sign-in history: [result]
+            - Additional observations: [any notable findings]
+
+            **Recommended Actions**:
+            - [List specific next steps for the analyst]
+
+  - Format: API
+    Skills:
+      - Name: CheckDeviceCompliance
+        DisplayName: Check Device Compliance
+        Description: >
+          Queries Microsoft Graph API to determine if the device used in the
+          sign-in is company-managed and compliant. A compliant, managed device
+          is a strong indicator of a false positive.
+        Inputs:
+          - Name: DeviceId
+            Description: The device ID extracted from the alert.
+            Required: true
+        Settings:
+          OpenApiSpecFile: openapispec_1.yaml
+
+      - Name: CheckOutOfOffice
+        DisplayName: Check Out of Office
+        Description: >
+          Queries Microsoft Graph API to check if the user has automatic replies
+          (Out of Office) configured. An active OOO with dates overlapping the
+          alert suggests the user is traveling, supporting a false positive
+          determination.
+        Inputs:
+          - Name: UserPrincipalName
+            Description: The UPN of the user from the alert.
+            Required: true
+        Settings:
+          OpenApiSpecFile: openapispec_2.yaml
+
+  - Format: KQL
+    Skills:
+      - Name: AnalyzeSignInHistory
+        DisplayName: Analyze Sign-In History
+        Description: >
+          Queries the SigninLogs table in Sentinel for the last 30 days of
+          sign-in activity for the user. Returns distinct IPs, geolocations,
+          sign-in frequency, and flags whether the alert's destination IP and
+          location have been seen before.
+        Inputs:
+          - Name: UserPrincipalName
+            Description: The UPN of the user to query.
+            Required: true
+          - Name: DestinationIP
+            Description: The destination IP from the alert to check against history.
+            Required: true
+          - Name: DestinationLocation
+            Description: The destination location (city, country) to check against history.
+            Required: true
+        Settings:
+          Template: kql/analyze_signin_history.kql
+
+AgentDefinitions:
+  - Name: TravelAnomalyTriageAgent
+    DisplayName: Travel Anomaly Triage
+    Description: >
+      Investigates atypical and impossible travel alerts by checking device
+      compliance, Out of Office status, and 30-day sign-in history. Produces
+      a triage verdict (False Positive / Suspicious / True Positive) with
+      confidence level and evidence summary.
+    Instructions: >
+      You are the Travel Anomaly Triage Agent. When triggered with an atypical
+      or impossible travel alert, execute the following plan:
+
+      1. Use ExtractAlertContext to parse the alert and identify the user,
+         device, IPs, locations, and timestamps.
+
+      2. Run these checks in parallel:
+         a. Use CheckDeviceCompliance with the device ID to determine if the
+            sign-in was from a company-managed, compliant device.
+         b. Use CheckOutOfOffice with the user's UPN to check if automatic
+            replies are enabled and the configured dates.
+         c. Use AnalyzeSignInHistory with the user's UPN, destination IP, and
+            destination location to review the last 30 days of sign-in activity.
+
+      3. Once all checks complete, use CorrelateAndVerdict to analyze all
+         evidence and produce the final triage verdict.
+
+      Always present your findings transparently. Do not close or resolve the
+      alert automatically — the analyst must approve the final disposition.
+    ChildSkills:
+      - TravelAnomalyTriageAgent.ExtractAlertContext
+      - TravelAnomalyTriageAgent.CheckDeviceCompliance
+      - TravelAnomalyTriageAgent.CheckOutOfOffice
+      - TravelAnomalyTriageAgent.AnalyzeSignInHistory
+      - TravelAnomalyTriageAgent.CorrelateAndVerdict
+    Triggers:
+      - Type: Interactive
+    Settings:
+      ModelOptions:
+        Temperature: 0.1

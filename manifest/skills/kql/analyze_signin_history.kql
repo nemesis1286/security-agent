@@ -1,0 +1,71 @@
+// Analyze sign-in history for the last 30 days to support travel anomaly triage.
+// Returns distinct IPs, geolocations, sign-in counts, and flags whether the
+// alert's destination IP/location has been seen before.
+
+let TargetUser = "{{UserPrincipalName}}";
+let AlertDestinationIP = "{{DestinationIP}}";
+let AlertDestinationLocation = "{{DestinationLocation}}";
+let LookbackPeriod = 30d;
+
+// Summary of distinct sign-in locations and IPs over the last 30 days
+let SignInSummary = SigninLogs
+    | where TimeGenerated > ago(LookbackPeriod)
+    | where UserPrincipalName =~ TargetUser
+    | extend City = tostring(LocationDetails.city)
+    | extend Country = tostring(LocationDetails.countryOrRegion)
+    | extend State = tostring(LocationDetails.state)
+    | extend Latitude = toreal(LocationDetails.geoCoordinates.latitude)
+    | extend Longitude = toreal(LocationDetails.geoCoordinates.longitude)
+    | summarize
+        SignInCount = count(),
+        FirstSeen = min(TimeGenerated),
+        LastSeen = max(TimeGenerated),
+        DistinctDays = dcount(bin(TimeGenerated, 1d))
+      by IPAddress, City, State, Country, Latitude, Longitude
+    | extend LocationLabel = strcat(City, ", ", Country)
+    | extend IsAlertDestinationIP = iif(IPAddress == AlertDestinationIP, true, false)
+    | extend IsAlertDestinationLocation = iif(LocationLabel contains AlertDestinationLocation, true, false)
+    | sort by SignInCount desc;
+
+// Check if the alert destination IP was seen before
+let DestinationIPSeen = toscalar(
+    SignInSummary
+    | where IsAlertDestinationIP == true
+    | summarize Count = count()
+) > 0;
+
+// Check if the alert destination location was seen before
+let DestinationLocationSeen = toscalar(
+    SignInSummary
+    | where IsAlertDestinationLocation == true
+    | summarize Count = count()
+) > 0;
+
+// Total distinct locations and IPs
+let TotalDistinctIPs = toscalar(SignInSummary | summarize dcount(IPAddress));
+let TotalDistinctLocations = toscalar(SignInSummary | summarize dcount(LocationLabel));
+
+// Output the full summary with flags
+SignInSummary
+| extend DestinationIPSeenBefore = DestinationIPSeen
+| extend DestinationLocationSeenBefore = DestinationLocationSeen
+| extend TotalDistinctIPs = TotalDistinctIPs
+| extend TotalDistinctLocations = TotalDistinctLocations
+| project
+    IPAddress,
+    LocationLabel,
+    City,
+    State,
+    Country,
+    Latitude,
+    Longitude,
+    SignInCount,
+    DistinctDays,
+    FirstSeen,
+    LastSeen,
+    IsAlertDestinationIP,
+    IsAlertDestinationLocation,
+    DestinationIPSeenBefore,
+    DestinationLocationSeenBefore,
+    TotalDistinctIPs,
+    TotalDistinctLocations
