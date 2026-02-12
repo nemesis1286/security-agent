@@ -1,0 +1,47 @@
+{
+  "id": "da637835796969552512_-7781234567",
+  "incidentId": "87",
+  "alertType": "ImpossibleTravel",
+  "title": "Impossible travel activity",
+  "severity": "High",
+  "status": "New",
+  "creationTime": "2026-02-12T14:22:00Z",
+  "description": "Sign-in detected from two geographically distant locations within an impossibly short time frame.",
+  "userPrincipalName": "bsmith@contoso.com",
+  "userDisplayName": "Bob Smith",
+  "sourceSignIn": {
+    "ipAddress": "192.0.2.100",
+    "location": {
+      "city": "Chicago",
+      "state": "Illinois",
+      "country": "US",
+      "latitude": 41.8781,
+      "longitude": -87.6298
+    },
+    "timestamp": "2026-02-12T14:00:00Z",
+    "deviceId": "",
+    "deviceName": "",
+    "browser": "Chrome 132",
+    "operatingSystem": "macOS 15"
+  },
+  "destinationSignIn": {
+    "ipAddress": "203.0.113.200",
+    "location": {
+      "city": "Tokyo",
+      "state": "Tokyo",
+      "country": "JP",
+      "latitude": 35.6762,
+      "longitude": 139.6503
+    },
+    "timestamp": "2026-02-12T14:15:00Z",
+    "deviceId": "",
+    "deviceName": "",
+    "browser": "Firefox 135",
+    "operatingSystem": "Linux"
+  },
+  "travelDetails": {
+    "distanceKm": 10145,
+    "timeDifferenceMinutes": 15,
+    "estimatedSpeedKmh": 40580
+  }
+}

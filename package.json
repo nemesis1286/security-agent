@@ -1,0 +1,11 @@
+{
+  "name": "travel-anomaly-triage-agent",
+  "version": "1.0.0",
+  "description": "Security Copilot agent that triages atypical and impossible travel alerts",
+  "publisher": "",
+  "securityStore": {
+    "offerType": "SaaS",
+    "integrations": ["Microsoft Defender", "Microsoft Sentinel"],
+    "estimatedScuPerRun": 4
+  }
+}

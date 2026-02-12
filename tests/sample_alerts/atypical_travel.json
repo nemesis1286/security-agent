@@ -1,0 +1,47 @@
+{
+  "id": "da637835796969552512_-1252889504",
+  "incidentId": "42",
+  "alertType": "AtypicalTravel",
+  "title": "Atypical travel activity",
+  "severity": "Medium",
+  "status": "New",
+  "creationTime": "2026-02-12T09:15:00Z",
+  "description": "Sign-in from an atypical location for the user based on recent sign-ins.",
+  "userPrincipalName": "jdoe@contoso.com",
+  "userDisplayName": "Jane Doe",
+  "sourceSignIn": {
+    "ipAddress": "203.0.113.50",
+    "location": {
+      "city": "New York",
+      "state": "New York",
+      "country": "US",
+      "latitude": 40.7128,
+      "longitude": -74.006
+    },
+    "timestamp": "2026-02-12T06:30:00Z",
+    "deviceId": "d8e8fca2-dc0f-11e6-bf26-cec0c932ce01",
+    "deviceName": "CONTOSO-JD-LT01",
+    "browser": "Edge 131",
+    "operatingSystem": "Windows 11"
+  },
+  "destinationSignIn": {
+    "ipAddress": "198.51.100.23",
+    "location": {
+      "city": "London",
+      "state": "England",
+      "country": "GB",
+      "latitude": 51.5074,
+      "longitude": -0.1278
+    },
+    "timestamp": "2026-02-12T09:00:00Z",
+    "deviceId": "d8e8fca2-dc0f-11e6-bf26-cec0c932ce01",
+    "deviceName": "CONTOSO-JD-LT01",
+    "browser": "Edge 131",
+    "operatingSystem": "Windows 11"
+  },
+  "travelDetails": {
+    "distanceKm": 5570,
+    "timeDifferenceMinutes": 150,
+    "estimatedSpeedKmh": 2228
+  }
+}
